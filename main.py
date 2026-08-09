@@ -1,100 +1,63 @@
-
 import asyncio
-import datetime
 import logging
 import os
+from dataclasses import dataclass, field
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from telethon import TelegramClient, functions, types as tg_types
-from telethon.sessions import StringSession
+# ============================================================
+# PAGAL ESCROW — UI/WORKFLOW DEMO
+# ------------------------------------------------------------
+# This version intentionally does NOT move, hold, verify, or
+# release real cryptocurrency. It reproduces the Telegram
+# workflow/UI shown in the screenshots for testing.
+#
+# Set your bot token as an environment variable:
+#   BOT_TOKEN=123456:ABC...
+# ============================================================
 
+logging.basicConfig(level=logging.INFO)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
+TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
-TOKEN = os.getenv("BOT_TOKEN")
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-SESSION_STRING = os.getenv("SESSION_STRING")
-
-if not TOKEN:
-    raise RuntimeError("BOT_TOKEN is missing")
-if not API_ID:
-    raise RuntimeError("API_ID is missing")
-if not API_HASH:
-    raise RuntimeError("API_HASH is missing")
-if not SESSION_STRING:
-    raise RuntimeError("SESSION_STRING is missing")
-
-API_ID = int(API_ID)
+if TOKEN == "YOUR_BOT_TOKEN_HERE":
+    raise RuntimeError("Set BOT_TOKEN environment variable before running.")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-user_client = TelegramClient(
-    StringSession(SESSION_STRING),
-    API_ID,
-    API_HASH,
-)
 
-active_escrows = {}
-
-
-def get_data(chat_id):
-    return active_escrows.setdefault(
-        chat_id,
-        {
-            "creator": None,
-            "creator_username": None,
-            "creator_id": None,
-            "buyer": None,
-            "buyer_username": None,
-            "buyer_id": None,
-            "buyer_wallet": None,
-            "seller": None,
-            "seller_username": None,
-            "seller_id": None,
-            "seller_wallet": None,
-            "token": None,
-            "network": None,
-            "deal_id": None,
-        },
-    )
+@dataclass
+class Escrow:
+    creator_id: int
+    creator_name: str
+    buyer: str | None = None
+    buyer_id: int | None = None
+    buyer_wallet: str | None = None
+    seller: str | None = None
+    seller_id: int | None = None
+    seller_wallet: str | None = None
+    token: str | None = None
+    network: str | None = None
+    deal_id: str = ""
+    quantity: str = ""
+    rate: str = ""
+    conditions: str = ""
 
 
-def person_label(name, username):
-    return f"@{username}" if username else name
+active_escrows: dict[int, Escrow] = {}
 
 
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    if message.chat.type != "private":
-        return
+def display_name(user: types.User) -> str:
+    return f"@{user.username}" if user.username else user.full_name
 
-    text = (
-        "✨ @PagalEscrowBot ✨\n"
-        "Your Trustworthy Telegram Escrow Service\n\n"
-        "Welcome to @PagalEscrowBot. This bot provides a reliable escrow service "
-        "for your transactions on Telegram.\n"
-        "Avoid scams, your funds are safeguarded throughout your deals. If you "
-        "run into any issues, simply type /dispute and an arbitrator will join "
-        "the group chat within 24 hours.\n\n"
-        "🧰 ESCROW FEE:\n"
-        "1.0% for P2P and 1.0% for OTC Flat\n\n"
-        "🌐 (UPDATES) - (VOUCHES) ✅\n\n"
-        "💬 Proceed with /escrow (to start with a new escrow)\n\n"
-        "⚠️ IMPORTANT - Make sure coin is same of Buyer and Seller else you "
-        "may loose your coin.\n\n"
-        "💡 Type /menu to summon a menu with all bots features"
-    )
 
-    keyboard = InlineKeyboardMarkup(
+def menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="COMMANDS LIST 🤖", callback_data="cmd_list")],
             [InlineKeyboardButton(text="📞 CONTACT", callback_data="contact")],
@@ -115,7 +78,34 @@ async def cmd_start(message: types.Message):
         ]
     )
 
-    await message.answer(text, reply_markup=keyboard)
+
+START_TEXT = (
+    "✨ @PagalEscrowBot ✨\n"
+    "Your Trustworthy Telegram Escrow Service\n\n"
+    "Welcome to @PagalEscrowBot. This bot provides a Telegram escrow "
+    "workflow for testing.\n\n"
+    "⚠️ DEMO MODE: This bot does not hold, transfer, or verify real crypto.\n\n"
+    "🧰 ESCROW FEE:\n"
+    "1.0% for P2P and 1.0% for OTC Flat\n\n"
+    "🌐 (UPDATES) - (VOUCHES) ✅\n\n"
+    "💬 Proceed with /escrow (to start a new demo escrow)\n\n"
+    "⚠️ IMPORTANT - Use only test data in this demo.\n\n"
+    "💡 Type /menu to summon a menu with all bot features"
+)
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    if message.chat.type != "private":
+        return
+    await message.answer(START_TEXT, reply_markup=menu_keyboard())
+
+
+@dp.message(Command("menu"))
+async def cmd_menu(message: types.Message):
+    if message.chat.type != "private":
+        return
+    await message.answer("Please select your escrow type from below.", reply_markup=menu_keyboard())
 
 
 @dp.message(Command("escrow"))
@@ -123,185 +113,133 @@ async def cmd_escrow(message: types.Message):
     if message.chat.type != "private":
         return
 
-    waiting = await message.answer(
+    await message.answer(
         "Creating a safe trading place for you, please wait..."
     )
 
-    try:
-        creator = message.from_user
-        bot_info = await bot.get_me()
+    await asyncio.sleep(0.5)
 
-        await user_client.start()
+    # Telegram Bot API does not provide bot.create_chat().
+    # The group must be created by a user and the bot added to it.
+    await message.answer(
+        "Escrow Group Setup\n\n"
+        "1. Create a Telegram supergroup.\n"
+        "2. Add this bot as an administrator.\n"
+        "3. Add the buyer and seller.\n"
+        "4. Run /setup in that group.\n\n"
+        "⚠️ DEMO MODE: no real funds are handled."
+    )
 
-        bot_entity = await user_client.get_entity(f"@{bot_info.username}")
 
-        result = await user_client(
-            functions.messages.CreateChatRequest(
-                users=[bot_entity],
-                title="P2P Escrow By PAGAL Bot",
-            )
-        )
+@dp.message(Command("setup"))
+async def cmd_setup(message: types.Message):
+    if message.chat.type not in {"group", "supergroup"}:
+        return
 
-        created_chat = next(
-            (chat for chat in result.chats if isinstance(chat, tg_types.Chat)),
-            None,
-        )
+    user = message.from_user
+    active_escrows[message.chat.id] = Escrow(
+        creator_id=user.id,
+        creator_name=user.full_name,
+        deal_id=str(user.id)[-6:],
+    )
 
-        if created_chat is None:
-            raise RuntimeError("Telegram did not return the new group.")
-
-        invite = await user_client(
-            functions.messages.ExportChatInviteRequest(peer=created_chat)
-        )
-
-        invite_link = getattr(invite, "link", None)
-        if not invite_link:
-            raise RuntimeError("Could not create invite link.")
-
-        # Basic Telegram groups use -chat_id in the Bot API.
-        chat_id = -created_chat.id
-
-        active_escrows[chat_id] = {
-            "creator": creator.full_name,
-            "creator_username": creator.username,
-            "creator_id": creator.id,
-            "buyer": None,
-            "buyer_username": None,
-            "buyer_id": None,
-            "buyer_wallet": None,
-            "seller": None,
-            "seller_username": None,
-            "seller_id": None,
-            "seller_wallet": None,
-            "token": None,
-            "network": None,
-            "deal_id": str(creator.id)[-6:],
-        }
-
-        response_text = (
-            "Escrow Group Created\n\n"
-            f"Creator: {creator.full_name}\n\n"
-            "Join this escrow group and share the link with the buyer and seller.\n\n"
-            f"{invite_link}\n\n"
-            "⚠️ Note: This link is for 2 members only—third parties are not allowed to join."
-        )
-
-        await waiting.edit_text(response_text)
-
-        welcome = (
-            "📍 Hey there traders! Welcome to our escrow service.\n"
-            "✅ Please start with /dd command and fill the DealInfo Form"
-        )
-
-        sent = await bot.send_message(chat_id=chat_id, text=welcome)
-
-        try:
-            await user_client(
-                functions.messages.UpdatePinnedMessageRequest(
-                    peer=created_chat,
-                    id=sent.message_id,
-                    silent=True,
-                )
-            )
-        except Exception:
-            logging.exception("Pin failed; welcome message was still sent.")
-
-    except Exception as exc:
-        logging.exception("Escrow creation failed")
-        await waiting.edit_text(
-            "❌ Error creating group.\n\n"
-            f"Details: {exc}"
-        )
+    await message.answer(
+        "Escrow Group Created\n\n"
+        f"Creator: {user.full_name}\n\n"
+        "Join this escrow group and share the group with the buyer and seller.\n\n"
+        "⚠️ Note: This is a demo workflow. No real crypto is processed."
+    )
 
 
 @dp.message(Command("dd"))
 async def cmd_dd(message: types.Message):
-    if message.chat.type not in ("group", "supergroup"):
+    if message.chat.type not in {"group", "supergroup"}:
         return
 
-    text = (
+    await message.answer(
         "Hello there,\n"
         "Kindly tell deal details i.e.\n\n"
         "Quantity -\n"
         "Rate -\n"
         "Conditions (if any) -\n\n"
-        "Remember without it disputes wouldn’t be resolved. Once filled proceed "
-        "with Specifications of the seller or buyer with /seller or /buyer "
-        "[CRYPTO ADDRESS]"
+        "Remember without it disputes wouldn’t be resolved. "
+        "Once filled proceed with Specifications of the seller or "
+        "buyer with /seller or /buyer [CRYPTO ADDRESS]\n\n"
+        "⚠️ DEMO MODE — use a placeholder address, not a real wallet."
     )
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="How To Use Bot ?", callback_data="how_to_use")]
-        ]
-    )
-
-    await message.answer(text, reply_markup=keyboard)
 
 
 @dp.message(Command("buyer"))
 async def cmd_buyer(message: types.Message):
-    if message.chat.type not in ("group", "supergroup"):
+    if message.chat.type not in {"group", "supergroup"}:
         return
 
-    data = get_data(message.chat.id)
-    user = message.from_user
-    args = message.text.split(maxsplit=1)
-    wallet = args[1].strip() if len(args) > 1 else "Saved Address"
-
-    data["buyer"] = user.full_name
-    data["buyer_username"] = user.username
-    data["buyer_id"] = user.id
-    data["buyer_wallet"] = wallet
-
-    username = person_label(user.full_name, user.username)
-
-    text = (
-        "📍 ESCROW-ROLE DECLARATION\n\n"
-        f"⚡ BUYER {username} | Userid: [{user.id}]\n\n"
-        "✅ BUYER WALLET\n"
-        f"{wallet}\n\n"
-        "Note: If you don't see any address, then your address will used from "
-        "saved addresses after selecting token and chain for the current escrow."
+    chat_id = message.chat.id
+    escrow = active_escrows.setdefault(
+        chat_id,
+        Escrow(
+            creator_id=message.from_user.id,
+            creator_name=message.from_user.full_name,
+            deal_id=str(message.from_user.id)[-6:],
+        ),
     )
 
-    await message.answer(text)
+    args = message.text.split(maxsplit=1)
+    wallet = args[1].strip() if len(args) > 1 else "Saved Address (DEMO)"
+
+    escrow.buyer = display_name(message.from_user)
+    escrow.buyer_id = message.from_user.id
+    escrow.buyer_wallet = wallet
+
+    await message.answer(
+        "📍 ESCROW-ROLE DECLARATION\n\n"
+        f"⚡ BUYER {escrow.buyer} | Userid: [{escrow.buyer_id}]\n\n"
+        "✅ BUYER WALLET\n"
+        f"{wallet}\n\n"
+        "Note: If you don't see any address, then your address will used "
+        "from saved addresses after selecting token and chain for the current escrow.\n\n"
+        "⚠️ DEMO MODE — no real wallet is used."
+    )
     await message.answer("Please set seller using /seller [DEPOSIT ADDRESS]")
 
 
 @dp.message(Command("seller"))
 async def cmd_seller(message: types.Message):
-    if message.chat.type not in ("group", "supergroup"):
+    if message.chat.type not in {"group", "supergroup"}:
         return
 
-    data = get_data(message.chat.id)
-    user = message.from_user
-    args = message.text.split(maxsplit=1)
-    wallet = args[1].strip() if len(args) > 1 else "Saved Address"
-
-    data["seller"] = user.full_name
-    data["seller_username"] = user.username
-    data["seller_id"] = user.id
-    data["seller_wallet"] = wallet
-
-    username = person_label(user.full_name, user.username)
-
-    text = (
-        "📍 ESCROW-ROLE DECLARATION\n\n"
-        f"⚡ SELLER {username} | Userid: [{user.id}]\n\n"
-        "✅ SELLER WALLET\n"
-        f"{wallet}\n\n"
-        "Note: If you don't see any address, then your address will used from "
-        "saved addresses after selecting token and chain for the current escrow."
+    chat_id = message.chat.id
+    escrow = active_escrows.setdefault(
+        chat_id,
+        Escrow(
+            creator_id=message.from_user.id,
+            creator_name=message.from_user.full_name,
+            deal_id=str(message.from_user.id)[-6:],
+        ),
     )
 
-    await message.answer(text)
+    args = message.text.split(maxsplit=1)
+    wallet = args[1].strip() if len(args) > 1 else "Saved Address (DEMO)"
+
+    escrow.seller = display_name(message.from_user)
+    escrow.seller_id = message.from_user.id
+    escrow.seller_wallet = wallet
+
+    await message.answer(
+        "📍 ESCROW-ROLE DECLARATION\n\n"
+        f"⚡ SELLER {escrow.seller} | Userid: [{escrow.seller_id}]\n\n"
+        "✅ SELLER WALLET\n"
+        f"{wallet}\n\n"
+        "Note: If you don't see any address, then your address will used "
+        "from saved addresses after selecting token and chain for the current escrow.\n\n"
+        "⚠️ DEMO MODE — no real wallet is used."
+    )
     await message.answer("Use /token to Choose crypto.")
 
 
 @dp.message(Command("token"))
 async def cmd_token(message: types.Message):
-    if message.chat.type not in ("group", "supergroup"):
+    if message.chat.type not in {"group", "supergroup"}:
         return
 
     keyboard = InlineKeyboardMarkup(
@@ -313,7 +251,6 @@ async def cmd_token(message: types.Message):
             [InlineKeyboardButton(text="USDT", callback_data="token_USDT")],
         ]
     )
-
     await message.answer(
         "choose token from the list below",
         reply_markup=keyboard,
@@ -322,22 +259,35 @@ async def cmd_token(message: types.Message):
 
 @dp.callback_query(F.data.startswith("token_"))
 async def process_token(callback: types.CallbackQuery):
-    token = callback.data.split("_", 1)[1]
     chat_id = callback.message.chat.id
-    data = get_data(chat_id)
-    data["token"] = token
+    escrow = active_escrows.setdefault(
+        chat_id,
+        Escrow(
+            creator_id=callback.from_user.id,
+            creator_name=callback.from_user.full_name,
+            deal_id=str(callback.from_user.id)[-6:],
+        ),
+    )
+
+    token = callback.data.split("_", 1)[1]
+    escrow.token = token
 
     if token == "USDT":
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="BSC[BEP20]", callback_data="net_BSC"),
-                    InlineKeyboardButton(text="TRON[TRC20]", callback_data="net_TRON"),
+                    InlineKeyboardButton(
+                        text="BSC[BEP20]",
+                        callback_data="net_BSC",
+                    ),
+                    InlineKeyboardButton(
+                        text="TRON[TRC20]",
+                        callback_data="net_TRON",
+                    ),
                 ],
                 [InlineKeyboardButton(text="Back ⬅️", callback_data="back_token")],
             ]
         )
-
         await callback.message.edit_text(
             "📍 ESCROW-CRYPTO DECLARATION\n\n"
             f"✅ CRYPTO\n{token}\n\n"
@@ -345,20 +295,9 @@ async def process_token(callback: types.CallbackQuery):
             reply_markup=keyboard,
         )
     else:
-        data["network"] = "NATIVE"
+        escrow.network = "NATIVE"
         await send_final_declaration(callback.message, chat_id)
 
-    await callback.answer()
-
-
-@dp.callback_query(F.data.startswith("net_"))
-async def process_network(callback: types.CallbackQuery):
-    network = callback.data.split("_", 1)[1]
-    chat_id = callback.message.chat.id
-    data = get_data(chat_id)
-    data["network"] = network
-
-    await send_final_declaration(callback.message, chat_id)
     await callback.answer()
 
 
@@ -373,7 +312,6 @@ async def back_token(callback: types.CallbackQuery):
             [InlineKeyboardButton(text="USDT", callback_data="token_USDT")],
         ]
     )
-
     await callback.message.edit_text(
         "choose token from the list below",
         reply_markup=keyboard,
@@ -381,33 +319,46 @@ async def back_token(callback: types.CallbackQuery):
     await callback.answer()
 
 
-async def send_final_declaration(message, chat_id):
-    data = get_data(chat_id)
+@dp.callback_query(F.data.startswith("net_"))
+async def process_network(callback: types.CallbackQuery):
+    chat_id = callback.message.chat.id
+    escrow = active_escrows[chat_id]
+    escrow.network = callback.data.split("_", 1)[1]
 
-    seller = data.get("seller") or "seller"
-    seller_id = data.get("seller_id") or "123456"
-    buyer = data.get("buyer") or "buyer"
-    buyer_id = data.get("buyer_id") or "654321"
+    await send_final_declaration(callback.message, chat_id)
+    await callback.answer()
 
-    seller_display = person_label(seller, data.get("seller_username"))
-    buyer_display = person_label(buyer, data.get("buyer_username"))
 
-    token = data.get("token") or "USDT"
-    network = data.get("network") or "BSC"
+async def send_final_declaration(message: types.Message, chat_id: int):
+    escrow = active_escrows[chat_id]
+
+    seller = escrow.seller or "seller"
+    buyer = escrow.buyer or "buyer"
+    seller_id = escrow.seller_id or "—"
+    buyer_id = escrow.buyer_id or "—"
+    token = escrow.token or "USDT"
+    network = escrow.network or "BSC"
 
     text = (
         "📍 ESCROW DECLARATION\n\n"
-        f"⚡ Seller {seller_display} | Userid: [{seller_id}]\n"
-        f"⚡ Buyer {buyer_display} | Userid: [{buyer_id}]\n\n"
+        f"⚡ Seller {seller} | Userid: [{seller_id}]\n"
+        f"⚡ Buyer {buyer} | Userid: [{buyer_id}]\n\n"
         f"✅ {token} CRYPTO\n"
-        f"✅ {network} NETWORK"
+        f"✅ {network} NETWORK\n\n"
+        "⚠️ DEMO MODE — no real transaction will be executed."
     )
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Accept ✅", callback_data="accept_deal"),
-                InlineKeyboardButton(text="Reject ❌", callback_data="reject_deal"),
+                InlineKeyboardButton(
+                    text="Accept ✅",
+                    callback_data="accept_deal",
+                ),
+                InlineKeyboardButton(
+                    text="Reject ❌",
+                    callback_data="reject_deal",
+                ),
             ]
         ]
     )
@@ -415,235 +366,189 @@ async def send_final_declaration(message, chat_id):
     await message.edit_text(text, reply_markup=keyboard)
 
 
-@dp.callback_query(F.data == "accept_deal")
-async def accept_deal(callback: types.CallbackQuery):
-    chat_id = callback.message.chat.id
-    data = get_data(chat_id)
-
-    deal_id = data.get("deal_id") or "24153438"
-
-    seller = data.get("seller") or "seller"
-    seller_id = data.get("seller_id") or "111111"
-    seller_wallet = data.get("seller_wallet") or "Saved Address"
-
-    buyer = data.get("buyer") or "buyer"
-    buyer_id = data.get("buyer_id") or "222222"
-    buyer_wallet = data.get("buyer_wallet") or "Saved Address"
-
-    seller_display = person_label(seller, data.get("seller_username"))
-    buyer_display = person_label(buyer, data.get("buyer_username"))
-
-    token = data.get("token") or "USDT"
-    network = data.get("network") or "BSC"
-
-    now_str = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
-
-    text = (
-        f"📍 TRANSACTION INFORMATION [{deal_id}]\n\n"
-        "⚡ SELLER\n"
-        f"{seller_display} | [{seller_id}]\n"
-        f"{seller_wallet}[{token}]\n"
-        f"[{network}]\n\n"
-        "⚡ BUYER\n"
-        f"{buyer_display} | [{buyer_id}]\n"
-        f"{buyer_wallet}[{token}]\n"
-        f"[{network}]\n\n"
-        f"⏰ Trade Start Time: {now_str}\n\n"
-        "⚠️ IMPORTANT: Make sure to finalise and agree each-others terms before depositing.\n\n"
-        "📄 Please use /deposit command to generate a deposit address for your trade."
-    )
-
-    await callback.message.edit_text(text)
-    await callback.message.answer(
-        "Your Fee is 1.0% as both buyer and seller are not using "
-        "@PagalEscrowBot in your bio."
+@dp.callback_query(F.data == "reject_deal")
+async def reject_deal(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "❌ Escrow declaration rejected.\n\n"
+        "You can restart the demo flow with /token."
     )
     await callback.answer()
 
 
-@dp.callback_query(F.data == "reject_deal")
-async def reject_deal(callback: types.CallbackQuery):
-    await callback.message.edit_text("❌ Deal rejected.")
+@dp.callback_query(F.data == "accept_deal")
+async def accept_deal(callback: types.CallbackQuery):
+    chat_id = callback.message.chat.id
+    escrow = active_escrows.get(chat_id)
+
+    if not escrow:
+        await callback.answer("Escrow session not found.", show_alert=True)
+        return
+
+    now_str = datetime.now().strftime("%d/%m/%y %H:%M:%S")
+
+    text = (
+        f"📍 TRANSACTION INFORMATION [{escrow.deal_id}]\n\n"
+        "⚡ SELLER\n"
+        f"{escrow.seller or 'seller'} | [{escrow.seller_id or '—'}]\n"
+        f"{escrow.seller_wallet or 'DEMO_ADDRESS'}[{escrow.token or 'USDT'}]\n"
+        f"[{escrow.network or 'BSC'}]\n\n"
+        "⚡ BUYER\n"
+        f"{escrow.buyer or 'buyer'} | [{escrow.buyer_id or '—'}]\n"
+        f"{escrow.buyer_wallet or 'DEMO_ADDRESS'}[{escrow.token or 'USDT'}]\n"
+        f"[{escrow.network or 'BSC'}]\n\n"
+        f"⏰ Trade Start Time: {now_str}\n\n"
+        "⚠️ IMPORTANT: Make sure to finalise and agree each-others terms "
+        "before proceeding.\n\n"
+        "📄 DEMO: /deposit shows a simulated deposit screen only."
+    )
+
+    await callback.message.edit_text(text)
+    await callback.message.answer(
+        "⚠️ DEMO MODE\n"
+        "No real payment, deposit, release, refund, or blockchain check "
+        "is performed by this bot."
+    )
     await callback.answer()
 
 
 @dp.message(Command("deposit"))
 async def cmd_deposit(message: types.Message):
-    if message.chat.type not in ("group", "supergroup"):
+    if message.chat.type not in {"group", "supergroup"}:
         return
 
-    await message.answer("Requesting a deposit address for you, please wait...")
-    await asyncio.sleep(1)
+    escrow = active_escrows.get(message.chat.id)
+    if not escrow:
+        await message.answer("Start the demo with /setup first.")
+        return
 
-    data = get_data(message.chat.id)
+    await message.answer("Requesting a demo deposit screen, please wait...")
+    await asyncio.sleep(0.5)
 
-    deal_id = data.get("deal_id") or "24153438"
-    seller = data.get("seller") or "seller"
-    seller_id = data.get("seller_id") or "111111"
-    buyer = data.get("buyer") or "buyer"
-    buyer_id = data.get("buyer_id") or "222222"
-
-    seller_display = person_label(seller, data.get("seller_username"))
-    buyer_display = person_label(buyer, data.get("buyer_username"))
-
-    token = data.get("token") or "USDT"
-    network = data.get("network") or "BSC"
-
-    now_str = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
+    now_str = datetime.now().strftime("%d/%m/%y %H:%M:%S")
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Check Payment", callback_data="check_payment")]
+            [
+                InlineKeyboardButton(
+                    text="Check Payment",
+                    callback_data="check_payment",
+                )
+            ]
         ]
     )
 
     deposit_text = (
-        f"📍 TRANSACTION INFORMATION [{deal_id}]\n\n"
+        f"📍 TRANSACTION INFORMATION [{escrow.deal_id}]\n\n"
         "⚡ SELLER\n"
-        f"{seller_display} | [{seller_id}]\n"
+        f"{escrow.seller or 'seller'} | [{escrow.seller_id or '—'}]\n"
         "⚡ BUYER\n"
-        f"{buyer_display} | [{buyer_id}]\n"
+        f"{escrow.buyer or 'buyer'} | [{escrow.buyer_id or '—'}]\n"
         "🟢 ESCROW ADDRESS\n"
-        "NOT_CONFIGURED\n"
-        f"[{token}]\n"
-        f"[{network}]\n\n"
-        f"Seller [{seller_display}] Will Pay on the Escrow Address, And Click On Check Payment.\n\n"
-        "Amount Recieved: 0.00000 [0.00$]\n\n"
+        "DEMO_ADDRESS_NOT_A_REAL_WALLET\n"
+        f"[{escrow.token or 'USDT'}]\n"
+        f"[{escrow.network or 'BSC'}]\n\n"
+        "Seller will see a simulated deposit screen here.\n\n"
+        "Amount Received: 0.00000 [0.00$]\n\n"
         f"⏰ Trade Start Time: {now_str}\n"
         "⏰ Address Reset In: 20.00 Min\n\n"
-        "📄 Note: Address will reset after the given time, so make sure to deposit "
-        "in the bot before the address expires.\n"
-        "Useful commands:\n"
-        "📄 /release = Will Release The Funds To Buyer.\n"
-        "📄 /refund = Will Refund The Funds To Seller.\n\n"
-        "Remember, once commands are used payment will be released, there is no revert!"
+        "📄 Note: This is a UI simulation. No address is generated and "
+        "no blockchain payment is checked.\n\n"
+        "Useful demo commands:\n"
+        "📄 /release = simulated release screen.\n"
+        "📄 /refund = simulated refund screen."
     )
 
     await message.answer(deposit_text, reply_markup=keyboard)
 
 
 @dp.callback_query(F.data == "check_payment")
-async def check_payment(callback: types.CallbackQuery):
+async def check_payment_callback(callback: types.CallbackQuery):
     await callback.answer(
-        "No payment detected yet. Please deposit funds to the escrow address.",
+        "DEMO: No real payment is checked.",
         show_alert=True,
     )
 
 
 @dp.message(Command("release"))
 async def cmd_release(message: types.Message):
-    if message.chat.type in ("group", "supergroup"):
+    if message.chat.type in {"group", "supergroup"}:
         await message.answer(
-            "⚠️ Release request received. Payment verification is required before release."
+            "✅ DEMO: Funds-release screen completed.\n"
+            "No real funds were released."
         )
 
 
 @dp.message(Command("refund"))
 async def cmd_refund(message: types.Message):
-    if message.chat.type in ("group", "supergroup"):
+    if message.chat.type in {"group", "supergroup"}:
         await message.answer(
-            "⚠️ Refund request received. Payment verification is required before refund."
+            "🔄 DEMO: Refund screen completed.\n"
+            "No real funds were refunded."
         )
 
 
-@dp.callback_query(F.data == "cmd_list")
-async def cmd_list(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer(
-        "COMMANDS LIST 🤖\n\n"
-        "/start\n"
-        "/escrow\n"
-        "/dd\n"
-        "/buyer\n"
-        "/seller\n"
-        "/token\n"
-        "/deposit\n"
-        "/release\n"
-        "/refund\n"
-        "/dispute"
-    )
+# -------------------- MENU CALLBACKS --------------------
 
-
-@dp.callback_query(F.data == "contact")
-async def contact(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer("📞 CONTACT")
-
-
-@dp.callback_query(F.data == "updates")
-async def updates(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer("🔄 Updates")
-
-
-@dp.callback_query(F.data == "vouches")
-async def vouches(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer("✅ Vouches")
-
-
-@dp.callback_query(F.data == "what_is_escrow")
-async def what_is_escrow(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer(
+MENU_TEXT = {
+    "cmd_list": (
+        "🤖 COMMANDS LIST\n\n"
+        "/start — Start bot\n"
+        "/menu — Open menu\n"
+        "/escrow — Demo escrow setup\n"
+        "/setup — Initialize current group\n"
+        "/dd — DealInfo form\n"
+        "/buyer — Set buyer\n"
+        "/seller — Set seller\n"
+        "/token — Choose crypto\n"
+        "/deposit — Simulated deposit screen\n"
+        "/release — Simulated release\n"
+        "/refund — Simulated refund"
+    ),
+    "contact": "📞 CONTACT\n\nDemo support: use the bot owner/admin contact configured for your project.",
+    "updates": "🔄 UPDATES\n\nDemo build — no live payment functionality.",
+    "vouches": "✅ VOUCHES\n\nDemo mode: no real transaction history.",
+    "what_is_escrow": (
         "WHAT IS ESCROW ?\n\n"
-        "Escrow is a transaction arrangement where funds are held until the "
-        "agreed conditions of a deal are completed."
-    )
+        "Escrow is a process where a neutral party can hold an asset "
+        "until agreed conditions are met. This project only demonstrates "
+        "the interface and workflow."
+    ),
+    "instructions": (
+        "👩‍💻 Instructions\n\n"
+        "Create a supergroup manually, add the bot as an administrator, "
+        "then use /setup. Continue with /dd, /buyer, /seller and /token."
+    ),
+    "terms": (
+        "📝 Terms\n\n"
+        "This build is a software demo. It does not custody, transfer, "
+        "verify, or release cryptocurrency."
+    ),
+    "invites": "👤 Invites\n\nUse Telegram's normal group invite controls for this demo.",
+    "start_p2p": "P2P demo selected. Create a group and use /setup.",
+    "start_product": "Product Deal demo selected.",
+    "how_to_use": (
+        "How To Use Bot ?\n\n"
+        "1. /setup\n"
+        "2. /dd\n"
+        "3. /buyer <demo-address>\n"
+        "4. /seller <demo-address>\n"
+        "5. /token\n"
+        "6. Accept the demo declaration\n"
+        "7. /deposit\n"
+    ),
+}
 
 
-@dp.callback_query(F.data == "instructions")
-async def instructions(callback: types.CallbackQuery):
+@dp.callback_query(F.data.in_(MENU_TEXT.keys()))
+async def menu_callbacks(callback: types.CallbackQuery):
+    await callback.message.answer(MENU_TEXT[callback.data])
     await callback.answer()
-    await callback.message.answer("Instructions 👩‍💻")
-
-
-@dp.callback_query(F.data == "terms")
-async def terms(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer("Terms 📝")
-
-
-@dp.callback_query(F.data == "invites")
-async def invites(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer("Invites 👤")
-
-
-@dp.callback_query(F.data == "how_to_use")
-async def how_to_use(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer(
-        "How To Use Bot ?\n\nStart with /dd and follow the instructions."
-    )
-
-
-@dp.callback_query(F.data.in_(["start_p2p", "start_product"]))
-async def start_deal(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer(
-        "Please use /escrow to start with a new escrow."
-    )
-
-
-@dp.message(Command("dispute"))
-async def cmd_dispute(message: types.Message):
-    if message.chat.type in ("group", "supergroup"):
-        await message.answer("⚠️ Dispute request received.")
 
 
 async def main():
-    await user_client.start()
-
-    me = await user_client.get_me()
-    logging.info(
-        "User session connected: %s [%s]",
-        getattr(me, "first_name", "Unknown"),
-        me.id,
-    )
-
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
